@@ -1,918 +1,314 @@
-# Home Media Server — Setup Guide
+# Duckstation Media Server
 
-This README summarizes the complete setup performed for the Docker-based home media server.
+Clean-room and disaster-recovery guide for this Docker Compose media server. The
+repository deliberately contains no VPN credentials, OpenVPN profiles, media,
+downloads, or application state.
 
-## 1. Server structure
+## What this stack runs
 
-The main directory is:
+| Service | LAN address | Container path |
+| --- | --- | --- |
+| Heimdall | `http://192.168.1.64/` | — |
+| Jellyfin | `http://192.168.1.64:8096` | `/media` (read-only) |
+| qBittorrent | `http://192.168.1.64:8080` | `/data` |
+| Prowlarr | `http://192.168.1.64:9696` | — |
+| Sonarr | `http://192.168.1.64:8989` | `/data` |
+| Radarr | `http://192.168.1.64:7878` | `/data` |
+| Bazarr | `http://192.168.1.64:6767` | `/data` |
+| Seerr | `http://192.168.1.64:5055` | — |
 
-```bash
-~/server
-```
+Jellyfin uses host networking. qBittorrent shares Gluetun's network namespace,
+so its Web UI and torrent ports are published by **Gluetun**, not qBittorrent.
 
-Suggested structure:
+## 1. Install Docker (Debian)
 
-```text
-~/server/
-├── docker-compose.yml
-├── .env
-├── gluetun/
-│   ├── pt134.nordvpn.com.udp_2.6.ovpn
-│   └── scripts/
-├── jellyfin/
-│   ├── config/
-│   └── cache/
-├── qbittorrent/
-│   └── config/
-├── prowlarr/
-│   └── config/
-├── sonarr/
-│   └── config/
-├── radarr/
-│   └── config/
-├── bazarr/
-│   └── config/
-├── seerr/
-│   └── config/
-├── heimdall/
-│   └── config/
-└── media/
-    └── drive/
-        ├── torrents/
-        └── media/
-            ├── movies/
-            └── tv/
-```
-
-Using `~` makes the configuration independent of the Linux username.
-
----
-
-## 2. External NTFS drive
-
-The external drive is mounted at:
-
-```text
-~/server/media/drive
-```
-
-Check the filesystem:
+These are the current official Docker Engine apt-repository instructions for
+Debian. See the [Docker Debian installation guide](https://docs.docker.com/engine/install/debian/)
+for supported releases and updates.
 
 ```bash
-lsblk -f
+sudo apt update
+sudo apt install -y ca-certificates curl git
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
 ```
-
-Check the active mount:
 
 ```bash
-findmnt -T ~/server/media/drive
+sudo tee /etc/apt/sources.list.d/docker.sources >/dev/null <<EOF
+Types: deb
+URIs: https://download.docker.com/linux/debian
+Suites: $(. /etc/os-release && echo "$VERSION_CODENAME")
+Components: stable
+Architectures: $(dpkg --print-architecture)
+Signed-By: /etc/apt/keyrings/docker.asc
+EOF
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo systemctl enable --now docker
 ```
 
-The `/etc/fstab` entry should use the drive UUID rather than `/dev/sda1`, for example:
-
-```fstab
-UUID=YOUR-UUID-HERE ~/server/media/drive ntfs3 defaults,uid=1000,gid=1000,umask=022,nofail,x-systemd.device-timeout=10 0 0
-```
-
-After changing `fstab`:
+Optionally permit the current user to run Docker without `sudo`, then log out
+and in again (or run `newgrp docker`). Membership of the `docker` group grants
+root-equivalent access; see [Docker's post-install guidance](https://docs.docker.com/engine/install/linux-postinstall/).
 
 ```bash
-sudo systemctl daemon-reload
-sudo mount -a
+sudo usermod -aG docker "$USER"
+newgrp docker
+docker run --rm hello-world
 ```
 
-Verify:
+## 2. Clone and prepare the project
 
 ```bash
-findmnt -T ~/server/media/drive
+git clone https://github.com/dllsantos/duckstation-media-server.git ~/server
+cd ~/server
+cp .env.example .env
+chmod 600 .env
 ```
 
----
-
-## 3. NTFS hardlinks
-
-Hardlinks are required so Sonarr/Radarr can import torrents without unnecessarily duplicating the files.
-
-Test them:
+The Compose file uses relative bind mounts, so `~/server` can be any user's
+home-directory project path. Create the directories before starting containers:
 
 ```bash
-touch ~/server/media/drive/torrents/test-hardlink
-
-ln ~/server/media/drive/torrents/test-hardlink    ~/server/media/drive/media/test-hardlink
-
-ls -li   ~/server/media/drive/torrents/test-hardlink   ~/server/media/drive/media/test-hardlink
+mkdir -p \
+  gluetun/iptables \
+  jellyfin/config jellyfin/cache \
+  qbittorrent/config prowlarr/config sonarr/config radarr/config \
+  bazarr/config seerr/config heimdall/config \
+  media/drive/torrents media/drive/media/movies media/drive/media/tv
 ```
 
-Both files must show the same inode number.
+## 3. Create `.env`
 
-Example:
-
-```text
-2358 ... media/test-hardlink
-2358 ... torrents/test-hardlink
-```
-
-This confirms that hardlinks work on the mounted filesystem.
-
-Remove the test:
+Get the numeric owner IDs from the account that owns `~/server`:
 
 ```bash
-rm ~/server/media/drive/torrents/test-hardlink
-rm ~/server/media/drive/media/test-hardlink
+id -u
+id -g
 ```
 
----
-
-## 4. Environment variables
-
-Keep sensitive NordVPN credentials out of `docker-compose.yml`.
-
-Create:
-
-```bash
-nano ~/server/.env
-```
-
-Example:
+Edit `.env` and replace every placeholder. `NORDVPN_USERNAME` and
+`NORDVPN_PASSWORD` are NordVPN **manual/OpenVPN service credentials**, not
+necessarily the normal Nord Account login.
 
 ```env
 NORDVPN_USERNAME=your_nordvpn_service_username
 NORDVPN_PASSWORD=your_nordvpn_service_password
+PUID=1000
+PGID=1000
 TZ=Europe/Lisbon
 ```
 
-The NordVPN username/password used here should be the credentials supplied for OpenVPN, not necessarily the normal Nord Account login.
+`PUID` and `PGID` are used by Prowlarr, Sonarr, Radarr, Bazarr, qBittorrent,
+and Heimdall. `.env` is ignored by Git and must never be committed.
 
-Protect the file:
+## 4. Install the NordVPN OpenVPN profile
 
-```bash
-chmod 600 ~/server/.env
-```
-
-Do not commit `.env` to Git.
-
----
-
-## 5. Gluetun + NordVPN
-
-Gluetun provides the VPN network namespace for qBittorrent.
-
-The NordVPN OpenVPN configuration is stored under:
-
-```text
-~/server/gluetun/
-```
-
-Example:
+Obtain an OpenVPN UDP configuration from NordVPN separately, then save it at
+this exact project-relative path:
 
 ```text
 ~/server/gluetun/pt134.nordvpn.com.udp_2.6.ovpn
 ```
 
-The OpenVPN configuration contains settings such as:
+The `gluetun` service mounts that host file read-only as
+`/gluetun/custom.conf`. The expected profile is not in Git because profiles
+with `<tls-crypt>`, `<key>`, or other cryptographic material are secrets.
 
-```text
-proto udp
-remote ...
-remote-cert-tls server
-tls-version-min 1.2
-auth-user-pass
-```
-
-The compose configuration uses:
-
-```yaml
-VPN_SERVICE_PROVIDER: custom
-VPN_TYPE: openvpn
-OPENVPN_CUSTOM_CONFIG: /gluetun/custom.conf
-```
-
-qBittorrent uses:
-
-```yaml
-network_mode: service:gluetun
-```
-
-This means qBittorrent shares Gluetun's network namespace and cannot bypass the VPN.
-
----
-
-## 6. Verify the VPN
-
-Check Gluetun:
+Confirm it will not be tracked:
 
 ```bash
-docker compose ps
+git check-ignore -v gluetun/pt134.nordvpn.com.udp_2.6.ovpn
+git status --short
 ```
 
-It should show:
+Do not paste the profile, VPN credentials, databases, configs, media, or
+downloads into commits.
 
-```text
-gluetun ... Up ... (healthy)
-```
+## 5. Mount the external NTFS drive
 
-Check the public IP from inside the Gluetun network:
+The drive must be mounted at `~/server/media/drive`; it is exposed as `/data`
+to qBittorrent, Sonarr, Radarr, and Bazarr, and as `/media` (read-only) to
+Jellyfin. Identify its UUID and filesystem:
 
 ```bash
-docker run --rm   --network container:gluetun   curlimages/curl:latest   https://ifconfig.me
+lsblk -f
 ```
 
-The returned IP must be the VPN IP, not the normal ISP IP.
-
-You can also check:
+Get the absolute mount-point path while in the project directory:
 
 ```bash
-docker logs gluetun --tail=50
+cd ~/server
+pwd
 ```
 
-Look for:
+Add an `/etc/fstab` line using the displayed absolute path, replacing all
+placeholders. Do not put `~` in `fstab`, since it is not expanded there.
 
-```text
-Initialization Sequence Completed
-Public IP address is ...
+```fstab
+UUID=YOUR-UUID-HERE /absolute/path/to/server/media/drive ntfs3 defaults,uid=YOUR_UID,gid=YOUR_GID,umask=022,nofail,x-systemd.device-timeout=10 0 0
 ```
 
----
-
-## 7. Gluetun firewall
-
-The torrent port is:
-
-```text
-6881
-```
-
-Gluetun must allow both TCP and UDP:
-
-```env
-FIREWALL_VPN_INPUT_PORTS=6881
-```
-
-Verify:
+Use the values from `id -u` and `id -g` for `YOUR_UID` and `YOUR_GID`. Then
+reload mount units, mount, and verify:
 
 ```bash
-docker exec gluetun sh -c 'env | grep FIREWALL_VPN_INPUT_PORTS'
-```
-
-Expected:
-
-```text
-FIREWALL_VPN_INPUT_PORTS=6881
-```
-
-Check the firewall:
-
-```bash
-docker exec gluetun iptables -S
-```
-
-You should see rules similar to:
-
-```text
--A INPUT -i tun0 -p tcp --dport 6881 -j ACCEPT
--A INPUT -i tun0 -p udp --dport 6881 -j ACCEPT
-```
-
----
-
-## 8. qBittorrent UDP tracker fix
-
-During troubleshooting, UDP trackers were failing even though general VPN connectivity worked.
-
-The additional iptables rule that solved the issue was:
-
-```bash
-iptables -A OUTPUT -p udp --sport 6881 -j ACCEPT
-```
-
-Because manually executing this inside the container is not persistent, it was moved into a Gluetun startup script.
-
-Create:
-
-```bash
-mkdir -p ~/server/gluetun/scripts
-nano ~/server/gluetun/scripts/custom.sh
-```
-
-Example script:
-
-```sh
-#!/bin/sh
-
-iptables -A OUTPUT -p udp --sport 6881 -j ACCEPT
-```
-
-Make it executable:
-
-```bash
-chmod +x ~/server/gluetun/scripts/custom.sh
-```
-
-Important: do not use the script as the Gluetun Docker `command` in a way that replaces the Gluetun executable. The script should be executed as part of the container startup mechanism supported by the installed Gluetun version.
-
-If the container reports:
-
-```text
-ERROR command is unknown: /gluetun/scripts/custom.sh
-```
-
-the script was incorrectly supplied as the main Gluetun command.
-
-After changing the startup configuration:
-
-```bash
-docker compose down
-docker compose up -d
-```
-
-Verify:
-
-```bash
-docker exec gluetun iptables -S OUTPUT
-```
-
-The UDP source-port rule should be present.
-
----
-
-## 9. qBittorrent
-
-qBittorrent uses:
-
-```text
-Web UI: http://SERVER-IP:8080
-Torrent port: 6881
-```
-
-The Docker setup exposes:
-
-```yaml
-ports:
-  - "8080:8080"
-  - "6881:6881"
-  - "6881:6881/udp"
-```
-
-qBittorrent is attached to Gluetun:
-
-```yaml
-network_mode: service:gluetun
-```
-
-Verify:
-
-```bash
-docker inspect qbittorrent   --format 'Status={{.State.Status}} RestartCount={{.RestartCount}} NetworkMode={{.HostConfig.NetworkMode}}'
-```
-
-Expected:
-
-```text
-NetworkMode=container:<gluetun-container-id>
-```
-
-The qBittorrent configuration should use:
-
-```text
-Port = 6881
-UPnP = disabled
-NAT-PMP = disabled
-```
-
-The configuration can be checked with:
-
-```bash
-docker exec qbittorrent grep -iE 'port|upnp|nat' /config/qBittorrent/qBittorrent.conf
-```
-
----
-
-## 10. qBittorrent Web UI authentication
-
-The qBittorrent API can return:
-
-```text
-403 Forbidden
-```
-
-after too many failed authentication attempts.
-
-Example:
-
-```text
-Your IP address has been banned after too many failed authentication attempts.
-```
-
-If this happens, wait for the temporary ban to expire and make sure Sonarr/Radarr are using the correct qBittorrent credentials.
-
-Avoid repeatedly testing incorrect credentials.
-
----
-
-## 11. Prowlarr
-
-Prowlarr runs on:
-
-```text
-http://SERVER-IP:9696
-```
-
-Prowlarr is used to manage indexers and synchronize them with Sonarr and Radarr.
-
-Basic workflow:
-
-```text
-Prowlarr
-   ↓
-Indexers
-   ↓
-Sonarr / Radarr
-   ↓
-qBittorrent
-```
-
----
-
-## 12. Sonarr
-
-Sonarr runs on:
-
-```text
-http://SERVER-IP:8989
-```
-
-Recommended root directory:
-
-```text
-/data/media/tv
-```
-
-qBittorrent download directory:
-
-```text
-/data/torrents
-```
-
-Sonarr and qBittorrent must see the same underlying filesystem structure so hardlinks work correctly.
-
----
-
-## 13. Radarr
-
-Radarr runs on:
-
-```text
-http://SERVER-IP:7878
-```
-
-Recommended root directory:
-
-```text
-/data/media/movies
-```
-
-qBittorrent download directory:
-
-```text
-/data/torrents
-```
-
-Like Sonarr, Radarr should use the same filesystem namespace as qBittorrent.
-
----
-
-## 14. Docker path mapping
-
-The host directory:
-
-```text
-~/server/media/drive
-```
-
-is mounted into the media-management containers as:
-
-```text
-/data
-```
-
-Therefore:
-
-```text
-Host:
-~/server/media/drive/torrents
-        ↓
-Container:
-/data/torrents
-```
-
-and:
-
-```text
-Host:
-~/server/media/drive/media/movies
-        ↓
-Container:
-/data/media/movies
-```
-
-```text
-Host:
-~/server/media/drive/media/tv
-        ↓
-Container:
-/data/media/tv
-```
-
-This common `/data` mapping is important for hardlinks.
-
----
-
-## 15. Bazarr
-
-Bazarr runs on:
-
-```text
-http://SERVER-IP:6767
-```
-
-Bazarr uses the same media paths:
-
-```text
-/data/media/tv
-/data/media/movies
-```
-
-If Bazarr reports:
-
-```text
-This Sonarr root directory does not seem to be accessible by Bazarr
-```
-
-or:
-
-```text
-This Radarr root directory does not seem to be accessible by Bazarr
-```
-
-verify that Bazarr has the same `/data` bind mount as Sonarr/Radarr.
-
-For Brazilian Portuguese subtitles, configure subtitle providers in Bazarr and enable:
-
-```text
-Portuguese (Brazil)
-```
-
-as the desired subtitle language.
-
----
-
-## 16. Jellyfin
-
-Jellyfin runs in host network mode:
-
-```yaml
-network_mode: host
-```
-
-Media is mounted read-only:
-
-```text
-/data/media
-```
-
-Jellyfin is available at:
-
-```text
-http://SERVER-IP:8096
-```
-
----
-
-## 17. Jellyfin hardware transcoding
-
-The host must expose `/dev/dri` to the Jellyfin container.
-
-Check:
-
-```bash
-docker exec jellyfin ls -lah /dev/dri
-```
-
-Expected devices include:
-
-```text
-card0
-card1
-renderD128
-```
-
-Check:
-
-```bash
-docker exec jellyfin ls -l /dev/dri/renderD128
-```
-
-The container must have access to the appropriate GPU device/group.
-
-Inside the container:
-
-```bash
-docker exec jellyfin id
-docker exec jellyfin getent group video
-```
-
-Then enable hardware acceleration in:
-
-```text
-Jellyfin
-→ Dashboard
-→ Playback
-→ Transcoding
-```
-
-Select the hardware acceleration method appropriate for the host GPU.
-
----
-
-## 18. Seerr
-
-Seerr runs on:
-
-```text
-http://SERVER-IP:5055
-```
-
-It integrates with:
-
-```text
-Jellyfin
-Sonarr
-Radarr
-```
-
-Typical request flow:
-
-```text
-User
- ↓
-Seerr
- ↓
-Sonarr / Radarr
- ↓
-Prowlarr
- ↓
-qBittorrent
- ↓
-Media library
- ↓
-Jellyfin
-```
-
----
-
-## 19. Heimdall
-
-Heimdall is used as the dashboard for all services.
-
-The server IP used during setup was:
-
-```text
-192.168.1.64
-```
-
-Typical links:
-
-```text
-Heimdall:
-http://192.168.1.64/
-
-Jellyfin:
-http://192.168.1.64:8096
-
-qBittorrent:
-http://192.168.1.64:8080
-
-Prowlarr:
-http://192.168.1.64:9696
-
-Sonarr:
-http://192.168.1.64:8989
-
-Radarr:
-http://192.168.1.64:7878
-
-Bazarr:
-http://192.168.1.64:6767
-
-Seerr:
-http://192.168.1.64:5055
-```
-
-If the server receives a different LAN IP in the future, update these links.
-
----
-
-## 20. Useful diagnostics
-
-### Check all containers
-
-```bash
-docker compose ps
-```
-
-### Follow Gluetun logs
-
-```bash
-docker logs -f gluetun
-```
-
-### Check qBittorrent logs
-
-```bash
-docker logs qbittorrent --tail=50
-```
-
-### Check Gluetun health
-
-```bash
-docker inspect gluetun --format '{{json .State.Health}}'
-```
-
-### Check VPN IP
-
-```bash
-docker run --rm   --network container:gluetun   curlimages/curl:latest   https://ifconfig.me
-```
-
-### Check mounted drive
-
-```bash
+sudo systemctl daemon-reload
+sudo mount -a
 findmnt -T ~/server/media/drive
 ```
 
-### Check Docker mounts
+The output must show the external drive, not the host filesystem. Create the
+media folders after a successful mount if necessary:
 
 ```bash
-docker inspect jellyfin
-docker inspect sonarr
-docker inspect radarr
-docker inspect bazarr
+mkdir -p ~/server/media/drive/torrents \
+  ~/server/media/drive/media/movies \
+  ~/server/media/drive/media/tv
 ```
 
-### Check GPU devices
+The common `/data` mapping is intentional: qBittorrent downloads to
+`/data/torrents`, while Sonarr and Radarr import into `/data/media/...` from
+the same mounted filesystem.
+
+## 6. Start and verify the stack
+
+Validate interpolation first, then start it:
 
 ```bash
-docker exec jellyfin ls -lah /dev/dri
+cd ~/server
+docker compose config
+docker compose up -d
+docker compose ps
 ```
 
-### Check Gluetun firewall
+Gluetun must be running before qBittorrent can operate. Check its logs and
+verify the public address from the shared network namespace:
 
 ```bash
-docker exec gluetun iptables -S
+docker logs gluetun --tail=50
+docker run --rm --network container:gluetun curlimages/curl:latest https://ifconfig.me
 ```
 
-### Check UDP port rule
+The address returned by the second command must be the VPN address, not the
+ISP address. qBittorrent should report that it uses Gluetun's namespace:
 
 ```bash
+docker inspect qbittorrent --format 'Status={{.State.Status}} NetworkMode={{.HostConfig.NetworkMode}}'
+```
+
+## 7. Gluetun and qBittorrent networking
+
+qBittorrent uses port `6881` for both TCP and UDP. Gluetun publishes:
+
+```yaml
+- "8080:8080"
+- "6881:6881"
+- "6881:6881/udp"
+```
+
+`FIREWALL_VPN_INPUT_PORTS=6881` allows inbound VPN traffic to that torrent
+port. UDP trackers additionally require this OUTPUT rule:
+
+```text
+iptables -A OUTPUT -p udp --sport 6881 -j ACCEPT
+```
+
+The persistent, active mechanism is
+[`gluetun/iptables/post-rules.txt`](gluetun/iptables/post-rules.txt), mounted
+by Compose at `/iptables/post-rules.txt`. Do not replace it with a Compose
+`command` that runs `custom.sh`: that replaces Gluetun's entrypoint and causes
+`ERROR command is unknown: /gluetun/scripts/custom.sh`. The obsolete
+`gluetun/scripts/custom.sh` has been removed.
+
+After startup, confirm both the setting and source-port rule:
+
+```bash
+docker exec gluetun sh -c 'env | grep FIREWALL_VPN_INPUT_PORTS'
 docker exec gluetun iptables -S OUTPUT
 ```
 
----
+In qBittorrent (`http://192.168.1.64:8080`), configure and retain Web UI
+credentials, set the listening port to `6881`, disable UPnP, disable NAT-PMP,
+and use `/data/torrents` as the download directory. Sonarr and Radarr connect
+to it at `http://gluetun:8080`, not `http://qbittorrent:8080`.
 
-## 21. Restart procedure
+## 8. Initial application setup
 
-After changing `docker-compose.yml`:
+Use the following order after all services are running.
+
+1. **qBittorrent** — set Web UI authentication, port `6881`, UPnP off,
+   NAT-PMP off, and download path `/data/torrents`.
+2. **Prowlarr** (`:9696`) — add indexers, then add Sonarr and Radarr under
+   *Settings → Apps* using their Compose service names (`http://sonarr:8989`
+   and `http://radarr:7878`) and each application's API key.
+3. **Sonarr** (`:8989`) — add root folder `/data/media/tv`; add qBittorrent at
+   `http://gluetun:8080` with its Web UI credentials; choose
+   `/data/torrents` for the completed-download path seen by the client.
+4. **Radarr** (`:7878`) — add root folder `/data/media/movies`; configure the
+   same qBittorrent endpoint and `/data/torrents` download path.
+5. **Bazarr** (`:6767`) — connect Sonarr and Radarr, retaining their roots
+   `/data/media/tv` and `/data/media/movies`; enable Portuguese (Brazil) and
+   configure the preferred Brazilian Portuguese subtitle providers.
+6. **Jellyfin** (`:8096`) — add `/media/movies` and `/media/tv` libraries.
+   The Compose file already passes `/dev/dri:/dev/dri`; in Dashboard → Playback
+   → Transcoding select the acceleration method suitable for the host GPU.
+7. **Seerr** (`:5055`) — connect Jellyfin, Sonarr, and Radarr during its setup
+   wizard, using the server addresses/API keys it requests.
+8. **Heimdall** (`:80`) — add dashboard links for the service addresses listed
+   at the top of this document.
+
+For Jellyfin GPU troubleshooting, the expected devices include `card0`,
+`card1`, and `renderD128` on this host:
+
+```bash
+docker exec jellyfin ls -lah /dev/dri
+docker exec jellyfin id
+```
+
+## Verification and troubleshooting
+
+```bash
+# Containers and recent logs
+docker compose ps
+docker logs gluetun --tail=100
+docker logs qbittorrent --tail=100
+
+# Mounted drive and container mount paths
+findmnt -T ~/server/media/drive
+docker inspect sonarr radarr bazarr jellyfin
+
+# Gluetun health and firewall
+docker inspect gluetun --format '{{json .State.Health}}'
+docker exec gluetun iptables -S
+
+# qBittorrent network namespace and effective configuration
+docker inspect qbittorrent --format '{{.HostConfig.NetworkMode}}'
+docker exec qbittorrent grep -iE 'port|upnp|nat' /config/qBittorrent/qBittorrent.conf
+```
+
+If qBittorrent's UDP trackers fail, first verify that Gluetun is connected,
+that port 6881 is configured, and that `iptables -S OUTPUT` includes the UDP
+source-port `6881` rule. If Bazarr cannot see a Sonarr or Radarr root, verify
+that all three services still mount `./media/drive` at `/data`. If Docker
+reports missing `PUID` or `PGID`, re-check `.env`.
+
+After changing Compose or `post-rules.txt`, recreate the stack:
 
 ```bash
 cd ~/server
 docker compose down
 docker compose up -d
-```
-
-Then check:
-
-```bash
 docker compose ps
 ```
 
-If something is restarting:
+## Security checklist
 
-```bash
-docker logs <container-name> --tail=100
-```
-
-For example:
-
-```bash
-docker logs gluetun --tail=100
-docker logs qbittorrent --tail=100
-```
-
----
-
-## 22. Final architecture
-
-```text
-                         Internet
-                            │
-                            ▼
-                     ┌─────────────┐
-                     │   Router    │
-                     └──────┬──────┘
-                            │
-                     ┌──────▼──────┐
-                     │ Docker Host │
-                     └──────┬──────┘
-                            │
-             ┌──────────────┴──────────────┐
-             │                             │
-             ▼                             ▼
-       ┌───────────┐                 ┌───────────┐
-       │  Gluetun  │                 │  Jellyfin │
-       │ NordVPN   │                 │           │
-       └─────┬─────┘                 └─────┬─────┘
-             │                             │
-             ▼                             │
-       ┌───────────┐                        │
-       │qBittorrent│                        │
-       └─────┬─────┘                        │
-             │                              │
-             ▼                              │
-       ~/server/media/drive                 │
-             │                              │
-       ┌─────┴─────┐                        │
-       │           │                        │
-       ▼           ▼                        ▼
-   torrents      media                  Playback
-                 │
-          ┌──────┴──────┐
-          │             │
-          ▼             ▼
-       movies          tv
-          │             │
-          └──────┬──────┘
-                 │
-        ┌────────┴────────┐
-        │                 │
-      Radarr            Sonarr
-        │                 │
-        └────────┬────────┘
-                 │
-              Prowlarr
-                 │
-              Indexers
-
-       Bazarr → subtitles
-       Seerr  → requests
-       Heimdall → dashboard
-```
-
----
-
-## 23. Final checklist
-
-Before considering the server complete:
-
-- [ ] External drive mounts automatically through `/etc/fstab`
-- [ ] NTFS hardlinks work
-- [ ] Gluetun is healthy
-- [ ] Public IP is the VPN IP
-- [ ] qBittorrent uses Gluetun's network namespace
-- [ ] TCP 6881 is allowed
-- [ ] UDP 6881 is allowed
-- [ ] UDP source-port rule is persistent
-- [ ] qBittorrent Web UI works
-- [ ] qBittorrent is not firewalled
-- [ ] Prowlarr is connected to Sonarr
-- [ ] Prowlarr is connected to Radarr
-- [ ] Sonarr is connected to qBittorrent
-- [ ] Radarr is connected to qBittorrent
-- [ ] Sonarr root path is `/data/media/tv`
-- [ ] Radarr root path is `/data/media/movies`
-- [ ] qBittorrent downloads to `/data/torrents`
-- [ ] Bazarr can access both media directories
-- [ ] Bazarr has Portuguese (Brazil) enabled
-- [ ] Jellyfin can access `/data/media`
-- [ ] `/dev/dri/renderD128` is available to Jellyfin
-- [ ] Jellyfin hardware transcoding is configured
-- [ ] Seerr is connected to Jellyfin
-- [ ] Seerr is connected to Sonarr/Radarr
-- [ ] Heimdall contains links to all services
-
----
-
-## 24. Important security notes
-
-Do not publish these files or credentials:
-
-```text
-.env
-*.ovpn
-qBittorrent configuration files
-```
-
-The `.env` file contains VPN credentials and should remain private.
-
-If VPN credentials are ever exposed publicly, regenerate/revoke them immediately.
-
-Keep the media-server interfaces restricted to your LAN unless there is a specific reason to expose them externally.
+- Keep `.env` private (`chmod 600 .env`).
+- Never commit `gluetun/*.ovpn`, especially profiles containing cryptographic
+  blocks such as `<tls-crypt>` or `<key>`.
+- Never commit application config directories, databases, media, downloads,
+  or logs; `.gitignore` excludes these paths.
+- Keep the service interfaces on the LAN unless you deliberately secure and
+  expose them.

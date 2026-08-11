@@ -19,7 +19,7 @@ services:
     volumes:
       - ./jellyfin/config:/config
       - ./jellyfin/cache:/cache
-      - /home/dsantos/server/media/drive/media:/media:ro
+      - ./media/drive/media:/media:ro
 
 
   # ============================================================
@@ -57,7 +57,7 @@ services:
 
     volumes:
       - ./sonarr/config:/config
-      - /home/dsantos/server/media/drive:/data
+      - ./media/drive:/data
 
     ports:
       - "8989:8989"
@@ -82,7 +82,7 @@ services:
 
     volumes:
       - ./radarr/config:/config
-      - /home/dsantos/server/media/drive:/data
+      - ./media/drive:/data
 
     ports:
       - "7878:7878"
@@ -107,7 +107,7 @@ services:
 
     volumes:
       - ./bazarr/config:/config
-      - /home/dsantos/server/media/drive:/data
+      - ./media/drive:/data
 
     ports:
       - "6767:6767"
@@ -175,7 +175,7 @@ services:
 
     volumes:
       - ./qbittorrent/config:/config
-      - /home/dsantos/server/media/drive:/data
+      - ./media/drive:/data
 
 
   # ============================================================
@@ -209,8 +209,8 @@ services:
     container_name: heimdall
     restart: unless-stopped
     environment:
-      PUID: "1000"
-      PGID: "1000"
+      PUID: ${PUID}
+      PGID: ${PGID}
       TZ: ${TZ}
     ports:
       - "80:80"
