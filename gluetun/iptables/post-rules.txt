@@ -1,0 +1,1 @@
+iptables -A OUTPUT -p udp --sport 6881 -j ACCEPT

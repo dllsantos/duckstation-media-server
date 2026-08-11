@@ -1,0 +1,219 @@
+services:
+
+  # ============================================================
+  # JELLYFIN
+  # ============================================================
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    container_name: jellyfin
+    restart: unless-stopped
+
+    network_mode: host
+
+    environment:
+      TZ: ${TZ}
+
+    devices:
+      - /dev/dri:/dev/dri
+
+    volumes:
+      - ./jellyfin/config:/config
+      - ./jellyfin/cache:/cache
+      - /home/dsantos/server/media/drive/media:/media:ro
+
+
+  # ============================================================
+  # PROWLARR
+  # ============================================================
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    container_name: prowlarr
+    restart: unless-stopped
+
+    environment:
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TZ}
+
+    volumes:
+      - ./prowlarr/config:/config
+
+    ports:
+      - "9696:9696"
+
+
+  # ============================================================
+  # SONARR
+  # ============================================================
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    restart: unless-stopped
+
+    environment:
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TZ}
+
+    volumes:
+      - ./sonarr/config:/config
+      - /home/dsantos/server/media/drive:/data
+
+    ports:
+      - "8989:8989"
+
+    depends_on:
+      - prowlarr
+      - qbittorrent
+
+
+  # ============================================================
+  # RADARR
+  # ============================================================
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
+    restart: unless-stopped
+
+    environment:
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TZ}
+
+    volumes:
+      - ./radarr/config:/config
+      - /home/dsantos/server/media/drive:/data
+
+    ports:
+      - "7878:7878"
+
+    depends_on:
+      - prowlarr
+      - qbittorrent
+
+
+  # ============================================================
+  # BAZARR
+  # ============================================================
+  bazarr:
+    image: lscr.io/linuxserver/bazarr:latest
+    container_name: bazarr
+    restart: unless-stopped
+
+    environment:
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TZ}
+
+    volumes:
+      - ./bazarr/config:/config
+      - /home/dsantos/server/media/drive:/data
+
+    ports:
+      - "6767:6767"
+
+    depends_on:
+      - sonarr
+      - radarr
+
+
+  # ============================================================
+  # GLUETUN / NORDVPN
+  # ============================================================
+  gluetun:
+    image: qmcgaw/gluetun:latest
+    container_name: gluetun
+    restart: unless-stopped
+
+    cap_add:
+      - NET_ADMIN
+
+    devices:
+      - /dev/net/tun:/dev/net/tun
+
+    environment:
+      VPN_SERVICE_PROVIDER: custom
+      VPN_TYPE: openvpn
+
+      OPENVPN_CUSTOM_CONFIG: /gluetun/custom.conf
+      OPENVPN_USER: ${NORDVPN_USERNAME}
+      OPENVPN_PASSWORD: ${NORDVPN_PASSWORD}
+
+      FIREWALL_VPN_INPUT_PORTS: 6881
+
+      TZ: ${TZ}
+
+    volumes:
+      - ./gluetun/pt134.nordvpn.com.udp_2.6.ovpn:/gluetun/custom.conf:ro
+      - ./gluetun/iptables/post-rules.txt:/iptables/post-rules.txt:ro
+    ports:
+      - "8080:8080"
+      - "6881:6881"
+      - "6881:6881/udp"
+
+
+  # ============================================================
+  # QBITTORRENT
+  # ============================================================
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    restart: unless-stopped
+
+    network_mode: service:gluetun
+
+    depends_on:
+      gluetun:
+        condition: service_started
+
+    environment:
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TZ}
+      WEBUI_PORT: 8080
+      TORRENTING_PORT: 6881
+
+    volumes:
+      - ./qbittorrent/config:/config
+      - /home/dsantos/server/media/drive:/data
+
+
+  # ============================================================
+  # SEERR
+  # ============================================================
+  seerr:
+    image: ghcr.io/seerr-team/seerr:latest
+    container_name: seerr
+    restart: unless-stopped
+
+    environment:
+      LOG_LEVEL: info
+      TZ: ${TZ}
+
+    volumes:
+      - ./seerr/config:/app/config
+
+    ports:
+      - "5055:5055"
+
+    depends_on:
+      - jellyfin
+      - sonarr
+      - radarr
+
+  # ============================================================
+  # HEIMDALL
+  # ============================================================
+  heimdall:
+    image: lscr.io/linuxserver/heimdall:latest
+    container_name: heimdall
+    restart: unless-stopped
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: ${TZ}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./heimdall/config:/config
