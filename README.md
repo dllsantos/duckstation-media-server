@@ -127,28 +127,17 @@ docker run --rm hello-world
 ```bash
 git clone https://github.com/dllsantos/duckstation-media-server.git ~/server
 cd ~/server
-cp .env.example .env
-chmod 600 .env
 ```
 
 The Compose file uses relative bind mounts, so `~/server` can be any user's
-home-directory project path. Create the directories before starting containers:
+home-directory project path. Choose one of the preparation options below.
 
-```bash
-mkdir -p \
-  gluetun/iptables \
-  jellyfin/config jellyfin/cache \
-  qbittorrent/config prowlarr/config sonarr/config radarr/config \
-  bazarr/config seerr/config heimdall/config \
-  media/drive/torrents media/drive/media/movies media/drive/media/tv
-```
-
-### Optional: use the setup script
+### Option A: use the setup script (recommended)
 
 For a new server, the included script automates the safe preparation work: it
-creates these directories, creates `.env` with your user IDs and timezone, and
-shows the server's IP address. It does **not** install Docker, mount a drive,
-or handle VPN credentials, because those decisions need your review.
+creates `.env` with your user IDs and timezone, creates the required folders,
+and shows the server's IP address. It does **not** install Docker, mount a
+drive, or handle VPN credentials, because those decisions need your review.
 
 ```bash
 ./setup.sh
@@ -164,6 +153,26 @@ the default NordVPN setup:
 For the no-VPN option, use `--no-vpn` instead. At any time, run
 `./setup.sh --vpn --doctor` or `./setup.sh --no-vpn --doctor` for a concise
 checklist of common setup problems.
+
+### Option B: prepare the project manually
+
+Create `.env` and protect it:
+
+```bash
+cp .env.example .env
+chmod 600 .env
+```
+
+Then create the directories before starting containers:
+
+```bash
+mkdir -p \
+  gluetun/iptables \
+  jellyfin/config jellyfin/cache \
+  qbittorrent/config prowlarr/config sonarr/config radarr/config \
+  bazarr/config seerr/config heimdall/config \
+  media/drive/torrents media/drive/media/movies media/drive/media/tv
+```
 
 ## 3. Create `.env`
 
