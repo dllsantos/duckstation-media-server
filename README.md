@@ -1,24 +1,61 @@
 # Duckstation Media Server
 
-Clean-room and disaster-recovery guide for this Docker Compose media server. The
-repository deliberately contains no VPN credentials, OpenVPN profiles, media,
-downloads, or application state.
+A self-hosted media server you can run on a Linux computer at home. It keeps
+your films and TV shows in one place, lets you watch them on devices on your
+home network, and provides tools to request, find, download, organise, and add
+subtitles to media automatically.
 
-## What this stack runs
+Everything runs in Docker containers, which are isolated applications managed
+from the single `docker-compose.yml` file. You do not need to understand every
+container before starting: follow this guide in order, then use the web pages
+listed below to configure each application.
 
-| Service | LAN address | Container path |
-| --- | --- | --- |
-| Heimdall | `http://192.168.1.64/` | — |
-| Jellyfin | `http://192.168.1.64:8096` | `/media` (read-only) |
-| qBittorrent | `http://192.168.1.64:8080` | `/data` |
-| Prowlarr | `http://192.168.1.64:9696` | — |
-| Sonarr | `http://192.168.1.64:8989` | `/data` |
-| Radarr | `http://192.168.1.64:7878` | `/data` |
-| Bazarr | `http://192.168.1.64:6767` | `/data` |
-| Seerr | `http://192.168.1.64:5055` | — |
+This repository deliberately contains no VPN credentials, OpenVPN profiles,
+media, downloads, or application state. That makes it safe to copy as the
+starting point for your own server.
+
+## What each service does
+
+Replace `SERVER_IP` below with the local IP address of **your** server. For
+example, if your server's address is `192.168.1.50`, Jellyfin is available at
+`http://192.168.1.50:8096`.
+
+| Service | What it is for | Open it from another device | Media path |
+| --- | --- | --- | --- |
+| Heimdall | A start page/dashboard for links to the other services. | `http://SERVER_IP/` | — |
+| Jellyfin | Your private Netflix-like player for streaming your movie and TV libraries. | `http://SERVER_IP:8096` | `/media` (read-only) |
+| Seerr | A friendly request page where family and friends can ask for movies or TV shows. | `http://SERVER_IP:5055` | — |
+| Sonarr | Watches for requested TV episodes, sends downloads to qBittorrent, then organises them. | `http://SERVER_IP:8989` | `/data` |
+| Radarr | The equivalent of Sonarr for movies. | `http://SERVER_IP:7878` | `/data` |
+| Prowlarr | Manages search/indexer connections once and shares them with Sonarr and Radarr. | `http://SERVER_IP:9696` | — |
+| qBittorrent | The download client that receives torrent downloads. Its traffic goes through the VPN. | `http://SERVER_IP:8080` | `/data` |
+| Gluetun | The VPN connection and firewall that protects qBittorrent; it has no normal web page. | — | — |
+| Bazarr | Finds and downloads subtitles for the movies and episodes managed by Radarr and Sonarr. | `http://SERVER_IP:6767` | `/data` |
 
 Jellyfin uses host networking. qBittorrent shares Gluetun's network namespace,
 so its Web UI and torrent ports are published by **Gluetun**, not qBittorrent.
+
+## Find your server's IP address
+
+Run this on the new server after it is connected to your home network:
+
+```bash
+hostname -I
+```
+
+Use the private IPv4 address from the output—normally one beginning with
+`192.168.`, `10.`, or `172.16.` through `172.31.`. If more than one address is
+shown, choose the one for your home-network adapter; this command is useful for
+checking it:
+
+```bash
+ip -4 addr show scope global
+```
+
+Then replace `SERVER_IP` in the addresses above with that value. You can open
+them from a phone, TV, or computer connected to the same home network. The
+address may change after a reboot unless you create a DHCP reservation (also
+called an IP reservation) for the server in your router's settings.
 
 ## 1. Install Docker (Debian)
 
@@ -229,7 +266,7 @@ docker exec gluetun sh -c 'env | grep FIREWALL_VPN_INPUT_PORTS'
 docker exec gluetun iptables -S OUTPUT
 ```
 
-In qBittorrent (`http://192.168.1.64:8080`), configure and retain Web UI
+In qBittorrent (`http://SERVER_IP:8080`), configure and retain Web UI
 credentials, set the listening port to `6881`, disable UPnP, disable NAT-PMP,
 and use `/data/torrents` as the download directory. Sonarr and Radarr connect
 to it at `http://gluetun:8080`, not `http://qbittorrent:8080`.
