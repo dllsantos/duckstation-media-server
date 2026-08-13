@@ -1,0 +1,16 @@
+# Optional override for people who choose to run qBittorrent without a VPN.
+# Start with:
+# docker compose -f docker-compose.yml -f docker-compose.no-vpn.yml up -d
+services:
+  # Do not start Gluetun or require its credentials/profile in no-VPN mode.
+  gluetun:
+    profiles: ["vpn"]
+
+  qbittorrent:
+    # Use qBittorrent's own network namespace instead of Gluetun's.
+    network_mode: bridge
+    depends_on: !reset []
+    ports:
+      - "8080:8080"
+      - "6881:6881"
+      - "6881:6881/udp"

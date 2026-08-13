@@ -28,12 +28,13 @@ example, if your server's address is `192.168.1.50`, Jellyfin is available at
 | Sonarr | Watches for requested TV episodes, sends downloads to qBittorrent, then organises them. | `http://SERVER_IP:8989` | `/data` |
 | Radarr | The equivalent of Sonarr for movies. | `http://SERVER_IP:7878` | `/data` |
 | Prowlarr | Manages search/indexer connections once and shares them with Sonarr and Radarr. | `http://SERVER_IP:9696` | — |
-| qBittorrent | The download client that receives torrent downloads. Its traffic goes through the VPN. | `http://SERVER_IP:8080` | `/data` |
-| Gluetun | The VPN connection and firewall that protects qBittorrent; it has no normal web page. | — | — |
+| qBittorrent | The download client that receives torrent downloads. By default, its traffic goes through the VPN. | `http://SERVER_IP:8080` | `/data` |
+| Gluetun | The optional VPN connection and firewall that protects qBittorrent in the default setup; it has no normal web page. | — | — |
 | Bazarr | Finds and downloads subtitles for the movies and episodes managed by Radarr and Sonarr. | `http://SERVER_IP:6767` | `/data` |
 
-Jellyfin uses host networking. qBittorrent shares Gluetun's network namespace,
-so its Web UI and torrent ports are published by **Gluetun**, not qBittorrent.
+Jellyfin uses host networking. In the default VPN setup, qBittorrent shares
+Gluetun's network namespace, so its Web UI and torrent ports are published by
+**Gluetun**, not qBittorrent.
 
 ## Find your server's IP address
 
@@ -56,6 +57,32 @@ Then replace `SERVER_IP` in the addresses above with that value. You can open
 them from a phone, TV, or computer connected to the same home network. The
 address may change after a reboot unless you create a DHCP reservation (also
 called an IP reservation) for the server in your router's settings.
+
+## Choose whether to use a VPN
+
+The default setup uses NordVPN through Gluetun and is the recommended choice
+when qBittorrent is used. It keeps qBittorrent's traffic in the VPN network
+namespace and activates Gluetun's firewall. Follow the NordVPN instructions in
+section 4, then use the normal `docker compose ...` commands in this guide.
+
+If you deliberately do **not** want to use a VPN, use the included override
+file whenever this guide says `docker compose`:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.no-vpn.yml up -d
+```
+
+This starts qBittorrent directly on the server and does not start Gluetun. Its
+torrent traffic will use your normal internet connection, so understand the
+privacy and legal implications before choosing it. In this mode, use
+`http://qbittorrent:8080` when Sonarr or Radarr asks for the qBittorrent
+address; do not use `http://gluetun:8080`.
+
+NordVPN is the documented default, but other VPN providers can also work when
+they supply a compatible OpenVPN configuration file and manual-connection
+credentials. This Compose file already uses Gluetun's `custom` OpenVPN mode:
+replace the NordVPN `.ovpn` profile and credentials with your provider's
+values, and check that provider's documentation before enabling it.
 
 ## 1. Install Docker (Debian)
 
@@ -127,7 +154,8 @@ id -g
 
 Edit `.env` and replace every placeholder. `NORDVPN_USERNAME` and
 `NORDVPN_PASSWORD` are NordVPN **manual/OpenVPN service credentials**, not
-necessarily the normal Nord Account login.
+necessarily the normal Nord Account login. If you choose the no-VPN override,
+you can leave those two values unused.
 
 ```env
 NORDVPN_USERNAME=your_nordvpn_service_username
@@ -140,10 +168,34 @@ TZ=Europe/Lisbon
 `PUID` and `PGID` are used by Prowlarr, Sonarr, Radarr, Bazarr, qBittorrent,
 and Heimdall. `.env` is ignored by Git and must never be committed.
 
-## 4. Install the NordVPN OpenVPN profile
+## 4. Install the NordVPN OpenVPN profile (default VPN setup)
 
-Obtain an OpenVPN UDP configuration from NordVPN separately, then save it at
-this exact project-relative path:
+Skip this section only if you chose the no-VPN override above.
+
+You need an active NordVPN subscription. Sign in to your
+[Nord Account manual-setup page](https://my.nordaccount.com/dashboard/nordvpn/manual-configuration/),
+then:
+
+1. Open the **Service credentials** tab and copy the username and password
+   shown there into `.env` as `NORDVPN_USERNAME` and `NORDVPN_PASSWORD`.
+   These are special credentials for manual VPN connections—not necessarily
+   the email address and password used to sign in to Nord Account.
+2. Open the **OpenVPN configuration files** tab. Choose a recommended server
+   (or a server in your preferred country) and download its **UDP**
+   configuration file. UDP matches this project's expected OpenVPN profile.
+3. Move the downloaded `.ovpn` file into the `gluetun` folder and rename it to
+   the exact filename expected by Compose:
+
+```bash
+mv ~/Downloads/your-downloaded-server.udp.ovpn \
+  ~/server/gluetun/pt134.nordvpn.com.udp_2.6.ovpn
+```
+
+If your project is not in `~/server`, replace that part of the command with
+its actual location. NordVPN's [manual OpenVPN guide](https://support.nordvpn.com/hc/en-us/articles/20164827795345-How-to-set-up-a-manual-connection-on-Linux-using-OpenVPN)
+also explains how to choose and download a server configuration.
+
+After moving it, the profile must be at this exact project-relative path:
 
 ```text
 ~/server/gluetun/pt134.nordvpn.com.udp_2.6.ovpn
@@ -220,6 +272,16 @@ docker compose up -d
 docker compose ps
 ```
 
+If you chose no-VPN mode, use this command instead:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.no-vpn.yml config
+docker compose -f docker-compose.yml -f docker-compose.no-vpn.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.no-vpn.yml ps
+```
+
+The remaining Gluetun checks apply only to the default VPN setup.
+
 Gluetun must be running before qBittorrent can operate. Check its logs and
 verify the public address from the shared network namespace:
 
@@ -235,7 +297,9 @@ ISP address. qBittorrent should report that it uses Gluetun's namespace:
 docker inspect qbittorrent --format 'Status={{.State.Status}} NetworkMode={{.HostConfig.NetworkMode}}'
 ```
 
-## 7. Gluetun and qBittorrent networking
+## 7. Gluetun and qBittorrent networking (default VPN setup)
+
+Skip this section in no-VPN mode.
 
 qBittorrent uses port `6881` for both TCP and UDP. Gluetun publishes:
 
@@ -268,8 +332,9 @@ docker exec gluetun iptables -S OUTPUT
 
 In qBittorrent (`http://SERVER_IP:8080`), configure and retain Web UI
 credentials, set the listening port to `6881`, disable UPnP, disable NAT-PMP,
-and use `/data/torrents` as the download directory. Sonarr and Radarr connect
-to it at `http://gluetun:8080`, not `http://qbittorrent:8080`.
+and use `/data/torrents` as the download directory. In the default VPN setup,
+Sonarr and Radarr connect to it at `http://gluetun:8080`; in no-VPN mode, they
+use `http://qbittorrent:8080`.
 
 ## 8. Initial application setup
 
@@ -296,8 +361,9 @@ containers, which is exactly what is needed here.
    - In *Settings/Options → Downloads*, set the default save path to
      `/data/torrents`. Leave completed downloads there; Sonarr and Radarr will
      import and rename copies into the media library.
-   - Save the settings. This service is deliberately reached by the other
-     containers at `http://gluetun:8080`, not `http://qbittorrent:8080`.
+   - Save the settings. The address other containers use depends on your
+     choice: `http://gluetun:8080` in the default VPN setup, or
+     `http://qbittorrent:8080` in no-VPN mode.
 
 2. **Set up Sonarr for TV shows** — open `http://SERVER_IP:8989` and complete
    its first-run prompts.
@@ -305,9 +371,11 @@ containers, which is exactly what is needed here.
    - Go to *Settings → Media Management → Root Folders* and add
      `/data/media/tv`. This is where finished episodes will be organised.
    - Go to *Settings → Download Clients*, add qBittorrent, and use
-     `http://gluetun:8080` with the Web UI username and password created in
-     the previous step. Set the category to something memorable, such as
-     `tv`, if you want Sonarr's downloads grouped separately.
+     `http://gluetun:8080` in the default VPN setup or
+     `http://qbittorrent:8080` in no-VPN mode. Enter the Web UI username and
+     password created in the previous step. Set the category to something
+     memorable, such as `tv`, if you want Sonarr's downloads grouped
+     separately.
    - Confirm the completed-download directory it sees is `/data/torrents`.
      It must match qBittorrent's path exactly because both containers mount
      the same drive as `/data`.
@@ -315,9 +383,9 @@ containers, which is exactly what is needed here.
      Prowlarr, Bazarr, and Seerr; treat it like a password.
 
 3. **Set up Radarr for movies** — open `http://SERVER_IP:7878`. Its setup is
-   the same as Sonarr's, but use `/data/media/movies` as the root folder and a
-   category such as `movies` for qBittorrent. Copy its API key from
-   *Settings → General* as well.
+   the same as Sonarr's, including the correct qBittorrent address for your
+   VPN choice, but use `/data/media/movies` as the root folder and a category
+   such as `movies`. Copy its API key from *Settings → General* as well.
 
 4. **Set up Prowlarr for indexers** — open `http://SERVER_IP:9696`.
 
