@@ -150,6 +150,21 @@ the default NordVPN setup:
 ./setup.sh --vpn --start
 ```
 
+To apply the repeatable application defaults after the containers are running,
+use `--configure`. It adds the Sonarr/Radarr media folders, connects both to
+qBittorrent with `tv` and `movies` categories, and connects Prowlarr to both
+applications. It asks for your qBittorrent Web UI password without saving it.
+Install `jq` first, then run the combined command:
+
+```bash
+sudo apt install -y jq
+./setup.sh --vpn --start --configure
+```
+
+`--configure` is safe to run again: it only creates settings that are missing.
+Indexer accounts, subtitle providers, and Jellyfin, Seerr, and Heimdall user
+accounts remain manual because they are personal credentials and preferences.
+
 For the no-VPN option, use `--no-vpn` instead. At any time, run
 `./setup.sh --vpn --doctor` or `./setup.sh --no-vpn --doctor` for a concise
 checklist of common setup problems.
@@ -246,7 +261,16 @@ git status --short
 Do not paste the profile, VPN credentials, databases, configs, media, or
 downloads into commits.
 
-## 5. Mount the external NTFS drive
+## 5. Choose media storage (optional external drive)
+
+By default, media is stored in `~/server/media/drive`. You can use this folder
+on the server's local disk—no extra setup is needed. Make sure the server has
+enough free space, because films, TV episodes, and downloads will all consume
+space on its system disk.
+
+If you have a separate external drive, mounting it at this same location keeps
+media separate from the operating system and is recommended for larger
+libraries. Follow the rest of this section to use an external NTFS drive.
 
 The drive must be mounted at `~/server/media/drive`; it is exposed as `/data`
 to qBittorrent, Sonarr, Radarr, and Bazarr, and as `/media` (read-only) to
