@@ -143,6 +143,28 @@ mkdir -p \
   media/drive/torrents media/drive/media/movies media/drive/media/tv
 ```
 
+### Optional: use the setup script
+
+For a new server, the included script automates the safe preparation work: it
+creates these directories, creates `.env` with your user IDs and timezone, and
+shows the server's IP address. It does **not** install Docker, mount a drive,
+or handle VPN credentials, because those decisions need your review.
+
+```bash
+./setup.sh
+```
+
+After finishing the remaining manual steps, the script can validate and start
+the default NordVPN setup:
+
+```bash
+./setup.sh --vpn --start
+```
+
+For the no-VPN option, use `--no-vpn` instead. At any time, run
+`./setup.sh --vpn --doctor` or `./setup.sh --no-vpn --doctor` for a concise
+checklist of common setup problems.
+
 ## 3. Create `.env`
 
 Get the numeric owner IDs from the account that owns `~/server`:
