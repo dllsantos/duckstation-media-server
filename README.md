@@ -273,28 +273,100 @@ to it at `http://gluetun:8080`, not `http://qbittorrent:8080`.
 
 ## 8. Initial application setup
 
-Use the following order after all services are running.
+Once `docker compose ps` shows the containers running, open the web pages from
+a device on your home network. Use `http://SERVER_IP:PORT`, with the address
+you found earlier. Most applications will show a first-run wizard. Create a
+strong, unique administrator account in each one before continuing.
 
-1. **qBittorrent** — set Web UI authentication, port `6881`, UPnP off,
-   NAT-PMP off, and download path `/data/torrents`.
-2. **Prowlarr** (`:9696`) — add indexers, then add Sonarr and Radarr under
-   *Settings → Apps* using their Compose service names (`http://sonarr:8989`
-   and `http://radarr:7878`) and each application's API key.
-3. **Sonarr** (`:8989`) — add root folder `/data/media/tv`; add qBittorrent at
-   `http://gluetun:8080` with its Web UI credentials; choose
-   `/data/torrents` for the completed-download path seen by the client.
-4. **Radarr** (`:7878`) — add root folder `/data/media/movies`; configure the
-   same qBittorrent endpoint and `/data/torrents` download path.
-5. **Bazarr** (`:6767`) — connect Sonarr and Radarr, retaining their roots
-   `/data/media/tv` and `/data/media/movies`; enable Portuguese (Brazil) and
-   configure the preferred Brazilian Portuguese subtitle providers.
-6. **Jellyfin** (`:8096`) — add `/media/movies` and `/media/tv` libraries.
-   The Compose file already passes `/dev/dri:/dev/dri`; in Dashboard → Playback
-   → Transcoding select the acceleration method suitable for the host GPU.
-7. **Seerr** (`:5055`) — connect Jellyfin, Sonarr, and Radarr during its setup
-   wizard, using the server addresses/API keys it requests.
-8. **Heimdall** (`:80`) — add dashboard links for the service addresses listed
-   at the top of this document.
+The order below matters: qBittorrent receives downloads; Sonarr and Radarr
+manage them; Prowlarr supplies searches; then the remaining applications use
+the resulting library. When an application asks for an address for another
+application, use the Docker service address shown below (for example,
+`http://sonarr:8989`), not `SERVER_IP`. These addresses work only between
+containers, which is exactly what is needed here.
+
+1. **Set up qBittorrent** — open `http://SERVER_IP:8080`.
+
+   - Sign in using the credentials shown in qBittorrent's first-run screen or
+     startup log, then immediately set your own Web UI username and strong
+     password.
+   - In *Settings/Options → Connection*, set the listening port to `6881`.
+     Disable UPnP and NAT-PMP so qBittorrent does not ask your router to open
+     ports outside the VPN configuration.
+   - In *Settings/Options → Downloads*, set the default save path to
+     `/data/torrents`. Leave completed downloads there; Sonarr and Radarr will
+     import and rename copies into the media library.
+   - Save the settings. This service is deliberately reached by the other
+     containers at `http://gluetun:8080`, not `http://qbittorrent:8080`.
+
+2. **Set up Sonarr for TV shows** — open `http://SERVER_IP:8989` and complete
+   its first-run prompts.
+
+   - Go to *Settings → Media Management → Root Folders* and add
+     `/data/media/tv`. This is where finished episodes will be organised.
+   - Go to *Settings → Download Clients*, add qBittorrent, and use
+     `http://gluetun:8080` with the Web UI username and password created in
+     the previous step. Set the category to something memorable, such as
+     `tv`, if you want Sonarr's downloads grouped separately.
+   - Confirm the completed-download directory it sees is `/data/torrents`.
+     It must match qBittorrent's path exactly because both containers mount
+     the same drive as `/data`.
+   - Copy the API key from *Settings → General*. Keep it available for
+     Prowlarr, Bazarr, and Seerr; treat it like a password.
+
+3. **Set up Radarr for movies** — open `http://SERVER_IP:7878`. Its setup is
+   the same as Sonarr's, but use `/data/media/movies` as the root folder and a
+   category such as `movies` for qBittorrent. Copy its API key from
+   *Settings → General* as well.
+
+4. **Set up Prowlarr for indexers** — open `http://SERVER_IP:9696`.
+
+   - Add only indexers and accounts that you are permitted to use. Prowlarr
+     keeps these search connections in one place instead of configuring each
+     one separately in Sonarr and Radarr.
+   - Open *Settings → Apps* and add Sonarr using `http://sonarr:8989` and the
+     Sonarr API key. Add Radarr using `http://radarr:7878` and its API key.
+   - Use Prowlarr's *Test* and *Save* controls, then sync the apps. New
+     indexers added in Prowlarr should now appear in Sonarr and Radarr.
+
+5. **Set up Bazarr for subtitles** — open `http://SERVER_IP:6767`.
+
+   - Connect Sonarr at `http://sonarr:8989` and Radarr at
+     `http://radarr:7878`, using the API keys you copied above.
+   - Check that Bazarr sees `/data/media/tv` and `/data/media/movies` as the
+     library locations. If it does not, stop and verify the drive mount before
+     downloading anything.
+   - Choose the subtitle languages you want—for example, Portuguese (Brazil)—
+     then configure subtitle providers you have permission to use.
+
+6. **Set up Jellyfin for watching** — open `http://SERVER_IP:8096` and create
+   the first administrator account.
+
+   - Create a *Movies* library that points to `/media/movies`, and a *Shows*
+     or *TV* library that points to `/media/tv`. Jellyfin can read this media
+     but cannot change it.
+   - Let Jellyfin scan the folders, then create separate user accounts for
+     people who will watch from the server.
+   - The Compose file already provides the host's graphics devices. If the
+     server has a compatible GPU, visit *Dashboard → Playback → Transcoding*
+     and choose the acceleration method appropriate for it. Leave this off if
+     you are unsure; streaming still works without hardware transcoding.
+
+7. **Set up Seerr for requests** — open `http://SERVER_IP:5055` and follow the
+   wizard. Connect it to Jellyfin, Sonarr, and Radarr using the addresses and
+   API keys it requests. It is a good place to give friends their own accounts
+   so they can request media without access to the admin tools.
+
+8. **Set up Heimdall as the home page** — open `http://SERVER_IP/` and create
+   its administrator account. Add tiles for Jellyfin, Seerr, Sonarr, Radarr,
+   Prowlarr, qBittorrent, and Bazarr using the `SERVER_IP` addresses in the
+   service table. Once this is done, Heimdall is the one bookmark most people
+   will need.
+
+Try a single movie or episode request from Seerr (or add one directly in
+Sonarr/Radarr) before adding a large library. Check that it downloads to
+`/data/torrents`, is imported into the right media folder, and appears in
+Jellyfin. That confirms the whole chain is working.
 
 For Jellyfin GPU troubleshooting, the expected devices include `card0`,
 `card1`, and `renderD128` on this host:
