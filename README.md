@@ -1,9 +1,9 @@
 # Duckstation Media Server
 
 A self-hosted media server you can run on a Linux computer at home. It keeps
-your films and TV shows in one place, lets you watch them on devices on your
-home network, and provides tools to request, find, download, organise, and add
-subtitles to media automatically.
+your films, TV shows, comics, and books in one place, lets you watch or read
+them on devices on your home network, and provides tools to request, find,
+download, organise, and add subtitles to media automatically.
 
 Everything runs in Docker containers, which are isolated applications managed
 from the single `docker-compose.yml` file. You do not need to understand every
@@ -24,9 +24,11 @@ example, if your server's address is `192.168.1.50`, Jellyfin is available at
 | --- | --- | --- | --- |
 | Heimdall | A start page/dashboard for links to the other services. | `http://SERVER_IP/` | — |
 | Jellyfin | Your private Netflix-like player for streaming your movie and TV libraries. | `http://SERVER_IP:8096` | `/media` (read-only) |
+| Kavita | A self-hosted reader for your comic, book, and manga files. | `http://SERVER_IP:5000` | `/comics`, `/books`, `/manga` |
 | Seerr | A friendly request page where family and friends can ask for movies or TV shows. | `http://SERVER_IP:5055` | — |
 | Sonarr | Watches for requested TV episodes, sends downloads to qBittorrent, then organises them. | `http://SERVER_IP:8989` | `/data` |
 | Radarr | The equivalent of Sonarr for movies. | `http://SERVER_IP:7878` | `/data` |
+| Kapowarr | Watches for requested comics, sends downloads to qBittorrent, then imports them into your library. | `http://SERVER_IP:5656` | `/media/comics` |
 | Prowlarr | Manages search/indexer connections once and shares them with Sonarr and Radarr. | `http://SERVER_IP:9696` | — |
 | qBittorrent | The download client that receives torrent downloads. By default, its traffic goes through the VPN. | `http://SERVER_IP:8080` | `/data` |
 | Gluetun | The optional VPN connection and firewall that protects qBittorrent in the default setup; it has no normal web page. | — | — |
@@ -186,7 +188,9 @@ mkdir -p \
   jellyfin/config jellyfin/cache \
   qbittorrent/config prowlarr/config sonarr/config radarr/config \
   bazarr/config seerr/config heimdall/config \
-  media/drive/torrents media/drive/media/movies media/drive/media/tv
+  kavita kapowarr-db \
+  media/drive/torrents media/drive/media/movies media/drive/media/tv \
+  media/drive/media/comics media/drive/media/books media/drive/media/manga
 ```
 
 ## 3. Create `.env`
@@ -309,7 +313,10 @@ media folders after a successful mount if necessary:
 ```bash
 mkdir -p ~/server/media/drive/torrents \
   ~/server/media/drive/media/movies \
-  ~/server/media/drive/media/tv
+  ~/server/media/drive/media/tv \
+  ~/server/media/drive/media/comics \
+  ~/server/media/drive/media/books \
+  ~/server/media/drive/media/manga
 ```
 
 The common `/data` mapping is intentional: qBittorrent downloads to
@@ -482,14 +489,38 @@ containers, which is exactly what is needed here.
 
 8. **Set up Heimdall as the home page** — open `http://SERVER_IP/` and create
    its administrator account. Add tiles for Jellyfin, Seerr, Sonarr, Radarr,
-   Prowlarr, qBittorrent, and Bazarr using the `SERVER_IP` addresses in the
-   service table. Once this is done, Heimdall is the one bookmark most people
-   will need.
+   Prowlarr, qBittorrent, Kavita, Kapowarr, and Bazarr using the `SERVER_IP`
+   addresses in the service table. Once this is done, Heimdall is the one
+   bookmark most people will need.
+
+9. **Set up Kapowarr for comics** — open `http://SERVER_IP:5656` and complete
+   its first-run wizard.
+
+   - Go to *Settings → Download Client*, add qBittorrent, and use
+     `http://gluetun:8080` in the default VPN setup or
+     `http://qbittorrent:8080` in no-VPN mode, with the Web UI credentials from
+     step 1.
+   - Set the completed-download folder it sees to `/app/temp_downloads`. This
+     is the same drive folder as qBittorrent's `/data/torrents`, so both
+     containers see the same finished files.
+   - Add the comic library root, for example `/media/comics`, where imported
+     comics are organised.
+
+10. **Set up Kavita for reading** — open `http://SERVER_IP:5000` and create
+    the first administrator account.
+
+    - Add a *Comics* library pointing to `/comics`, a *Books* library pointing
+      to `/books`, and a *Manga* library pointing to `/manga`.
+    - Let Kavita scan the folders, then create separate reader accounts for
+      people who will use the server. Kavita reads the same comic folder that
+      Kapowarr imports into.
 
 Try a single movie or episode request from Seerr (or add one directly in
 Sonarr/Radarr) before adding a large library. Check that it downloads to
 `/data/torrents`, is imported into the right media folder, and appears in
-Jellyfin. That confirms the whole chain is working.
+Jellyfin. For comics, add a series in Kapowarr and confirm it downloads, is
+imported into `/media/comics`, and shows up in Kavita. That confirms the whole
+chain is working.
 
 For Jellyfin GPU troubleshooting, the expected devices include `card0`,
 `card1`, and `renderD128` on this host:
