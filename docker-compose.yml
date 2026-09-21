@@ -217,3 +217,31 @@ services:
       - "443:443"
     volumes:
       - ./heimdall/config:/config
+  kavita:
+    image: jvmilazz0/kavita:latest
+    container_name: kavita
+    environment:
+      - TZ=Europe/Lisbon
+    volumes:
+      - ./kavita:/kavita/config
+      - ./media/drive/media/comics:/comics
+      - ./media/drive/media/books:/books
+      - ./media/drive/media/manga:/manga
+    ports:
+      - "5000:5000"
+    restart: unless-stopped
+  kapowarr:
+    container_name: kapowarr
+    image: mrcas/kapowarr:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Lisbon
+    volumes:
+      - ./kapowarr-db:/app/db
+      - ./media/drive/torrents:/app/temp_downloads
+      - ./media/drive/media/comics:/media/comics
+      - ./media/drive/media/comics:/comics
+    ports:
+      - 5656:5656
+    restart: unless-stopped
